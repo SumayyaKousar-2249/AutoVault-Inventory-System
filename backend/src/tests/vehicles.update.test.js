@@ -1,6 +1,7 @@
 'use strict';
 
 const request = require('supertest');
+const bcrypt  = require('bcryptjs');
 const app = require('../app');
 const { db, initialize } = require('../config/database');
 
@@ -16,10 +17,25 @@ async function getAuthToken() {
   return res.body.token;
 }
 
-async function addVehicle(token) {
+async function getAdminToken() {
+  const hashedPassword = await bcrypt.hash('adminpass', 10);
+  await new Promise((resolve, reject) => {
+    db.run(
+      `INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)`,
+      ['Admin User', 'admin@example.com', hashedPassword, 'ADMIN'],
+      (err) => (err ? reject(err) : resolve())
+    );
+  });
+  const res = await request(app)
+    .post('/api/auth/login')
+    .send({ email: 'admin@example.com', password: 'adminpass' });
+  return res.body.token;
+}
+
+async function addVehicle(adminToken) {
   const res = await request(app)
     .post('/api/vehicles')
-    .set('Authorization', `Bearer ${token}`)
+    .set('Authorization', `Bearer ${adminToken}`)
     .send({ make: 'Toyota', model: 'Camry', category: 'Sedan', price: 25000, quantity: 5 });
   return res.body.vehicle;
 }
@@ -46,7 +62,7 @@ describe('PUT /api/vehicles/:id', () => {
   });
 
   it('should return 404 when the vehicle does not exist', async () => {
-    const token = await getAuthToken();
+    const token = await getAdminToken();
 
     const res = await request(app)
       .put('/api/vehicles/99999')
@@ -58,7 +74,7 @@ describe('PUT /api/vehicles/:id', () => {
   });
 
   it('should update all fields and return the updated vehicle', async () => {
-    const token = await getAuthToken();
+    const token   = await getAdminToken();
     const vehicle = await addVehicle(token);
 
     const res = await request(app)
@@ -75,7 +91,7 @@ describe('PUT /api/vehicles/:id', () => {
   });
 
   it('should persist the update in the database', async () => {
-    const token = await getAuthToken();
+    const token   = await getAdminToken();
     const vehicle = await addVehicle(token);
 
     await request(app)
@@ -94,7 +110,7 @@ describe('PUT /api/vehicles/:id', () => {
   });
 
   it('should return 400 when price is invalid', async () => {
-    const token = await getAuthToken();
+    const token   = await getAdminToken();
     const vehicle = await addVehicle(token);
 
     const res = await request(app)
@@ -107,7 +123,7 @@ describe('PUT /api/vehicles/:id', () => {
   });
 
   it('should return 400 when quantity is invalid', async () => {
-    const token = await getAuthToken();
+    const token   = await getAdminToken();
     const vehicle = await addVehicle(token);
 
     const res = await request(app)
@@ -120,7 +136,7 @@ describe('PUT /api/vehicles/:id', () => {
   });
 
   it('should return 400 when required fields are missing', async () => {
-    const token = await getAuthToken();
+    const token   = await getAdminToken();
     const vehicle = await addVehicle(token);
 
     const res = await request(app)

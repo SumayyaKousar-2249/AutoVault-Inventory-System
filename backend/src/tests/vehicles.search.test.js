@@ -1,6 +1,7 @@
 'use strict';
 
 const request = require('supertest');
+const bcrypt  = require('bcryptjs');
 const app = require('../app');
 const { db, initialize } = require('../config/database');
 
@@ -16,10 +17,25 @@ async function getAuthToken() {
   return res.body.token;
 }
 
-async function addVehicle(token, data) {
+async function getAdminToken() {
+  const hashedPassword = await bcrypt.hash('adminpass', 10);
+  await new Promise((resolve, reject) => {
+    db.run(
+      `INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)`,
+      ['Admin User', 'admin@example.com', hashedPassword, 'ADMIN'],
+      (err) => (err ? reject(err) : resolve())
+    );
+  });
+  const res = await request(app)
+    .post('/api/auth/login')
+    .send({ email: 'admin@example.com', password: 'adminpass' });
+  return res.body.token;
+}
+
+async function addVehicle(adminToken, data) {
   return request(app)
     .post('/api/vehicles')
-    .set('Authorization', `Bearer ${token}`)
+    .set('Authorization', `Bearer ${adminToken}`)
     .send(data);
 }
 
@@ -45,9 +61,9 @@ const VEHICLES = [
   { make: 'BMW',    model: 'X5',      category: 'SUV',    price: 65000, quantity: 1 },
 ];
 
-async function seedVehicles(token) {
+async function seedVehicles(adminToken) {
   for (const v of VEHICLES) {
-    await addVehicle(token, v);
+    await addVehicle(adminToken, v);
   }
 }
 
@@ -61,12 +77,13 @@ describe('GET /api/vehicles/search', () => {
   });
 
   it('should return all vehicles when no filters are provided', async () => {
-    const token = await getAuthToken();
-    await seedVehicles(token);
+    const adminToken = await getAdminToken();
+    const userToken  = await getAuthToken();
+    await seedVehicles(adminToken);
 
     const res = await request(app)
       .get('/api/vehicles/search')
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', `Bearer ${userToken}`);
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toHaveProperty('vehicles');
@@ -74,12 +91,13 @@ describe('GET /api/vehicles/search', () => {
   });
 
   it('should filter by make (case-insensitive)', async () => {
-    const token = await getAuthToken();
-    await seedVehicles(token);
+    const adminToken = await getAdminToken();
+    const userToken  = await getAuthToken();
+    await seedVehicles(adminToken);
 
     const res = await request(app)
       .get('/api/vehicles/search?make=toyota')
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', `Bearer ${userToken}`);
 
     expect(res.statusCode).toBe(200);
     expect(res.body.vehicles.length).toBe(2);
@@ -87,12 +105,13 @@ describe('GET /api/vehicles/search', () => {
   });
 
   it('should filter by model (case-insensitive)', async () => {
-    const token = await getAuthToken();
-    await seedVehicles(token);
+    const adminToken = await getAdminToken();
+    const userToken  = await getAuthToken();
+    await seedVehicles(adminToken);
 
     const res = await request(app)
       .get('/api/vehicles/search?model=civic')
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', `Bearer ${userToken}`);
 
     expect(res.statusCode).toBe(200);
     expect(res.body.vehicles.length).toBe(1);
@@ -100,12 +119,13 @@ describe('GET /api/vehicles/search', () => {
   });
 
   it('should filter by category (case-insensitive)', async () => {
-    const token = await getAuthToken();
-    await seedVehicles(token);
+    const adminToken = await getAdminToken();
+    const userToken  = await getAuthToken();
+    await seedVehicles(adminToken);
 
     const res = await request(app)
       .get('/api/vehicles/search?category=SUV')
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', `Bearer ${userToken}`);
 
     expect(res.statusCode).toBe(200);
     expect(res.body.vehicles.length).toBe(2);
@@ -113,12 +133,13 @@ describe('GET /api/vehicles/search', () => {
   });
 
   it('should filter by minPrice', async () => {
-    const token = await getAuthToken();
-    await seedVehicles(token);
+    const adminToken = await getAdminToken();
+    const userToken  = await getAuthToken();
+    await seedVehicles(adminToken);
 
     const res = await request(app)
       .get('/api/vehicles/search?minPrice=40000')
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', `Bearer ${userToken}`);
 
     expect(res.statusCode).toBe(200);
     expect(res.body.vehicles.length).toBe(2); // F-150 + BMW X5
@@ -126,12 +147,13 @@ describe('GET /api/vehicles/search', () => {
   });
 
   it('should filter by maxPrice', async () => {
-    const token = await getAuthToken();
-    await seedVehicles(token);
+    const adminToken = await getAdminToken();
+    const userToken  = await getAuthToken();
+    await seedVehicles(adminToken);
 
     const res = await request(app)
       .get('/api/vehicles/search?maxPrice=25000')
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', `Bearer ${userToken}`);
 
     expect(res.statusCode).toBe(200);
     expect(res.body.vehicles.length).toBe(2); // Camry + Civic
@@ -139,12 +161,13 @@ describe('GET /api/vehicles/search', () => {
   });
 
   it('should filter by combined make + category', async () => {
-    const token = await getAuthToken();
-    await seedVehicles(token);
+    const adminToken = await getAdminToken();
+    const userToken  = await getAuthToken();
+    await seedVehicles(adminToken);
 
     const res = await request(app)
       .get('/api/vehicles/search?make=Toyota&category=SUV')
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', `Bearer ${userToken}`);
 
     expect(res.statusCode).toBe(200);
     expect(res.body.vehicles.length).toBe(1);
@@ -152,24 +175,26 @@ describe('GET /api/vehicles/search', () => {
   });
 
   it('should filter by combined minPrice + maxPrice range', async () => {
-    const token = await getAuthToken();
-    await seedVehicles(token);
+    const adminToken = await getAdminToken();
+    const userToken  = await getAuthToken();
+    await seedVehicles(adminToken);
 
     const res = await request(app)
       .get('/api/vehicles/search?minPrice=22000&maxPrice=32000')
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', `Bearer ${userToken}`);
 
     expect(res.statusCode).toBe(200);
     expect(res.body.vehicles.length).toBe(3); // Civic, Camry, RAV4
   });
 
   it('should return empty array when no vehicles match the filter', async () => {
-    const token = await getAuthToken();
-    await seedVehicles(token);
+    const adminToken = await getAdminToken();
+    const userToken  = await getAuthToken();
+    await seedVehicles(adminToken);
 
     const res = await request(app)
       .get('/api/vehicles/search?make=Ferrari')
-      .set('Authorization', `Bearer ${token}`);
+      .set('Authorization', `Bearer ${userToken}`);
 
     expect(res.statusCode).toBe(200);
     expect(res.body.vehicles).toEqual([]);
