@@ -1,35 +1,18 @@
 'use strict';
 
 const request = require('supertest');
-const bcrypt  = require('bcryptjs');
 const app = require('../app');
 const { db, initialize } = require('../config/database');
+const { getUserToken, getAdminToken: _getAdminToken } = require('./helpers/auth');
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
-async function getAuthToken() {
-  await request(app)
-    .post('/api/auth/register')
-    .send({ name: 'Searcher', email: 'searcher@example.com', password: 'pass1234' });
-  const res = await request(app)
-    .post('/api/auth/login')
-    .send({ email: 'searcher@example.com', password: 'pass1234' });
-  return res.body.token;
+function getAuthToken() {
+  return getUserToken(app, 'searcher@example.com', 'pass1234', 'Searcher');
 }
 
-async function getAdminToken() {
-  const hashedPassword = await bcrypt.hash('adminpass', 10);
-  await new Promise((resolve, reject) => {
-    db.run(
-      `INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)`,
-      ['Admin User', 'admin@example.com', hashedPassword, 'ADMIN'],
-      (err) => (err ? reject(err) : resolve())
-    );
-  });
-  const res = await request(app)
-    .post('/api/auth/login')
-    .send({ email: 'admin@example.com', password: 'adminpass' });
-  return res.body.token;
+function getAdminToken() {
+  return _getAdminToken(app, db);
 }
 
 async function addVehicle(adminToken, data) {
