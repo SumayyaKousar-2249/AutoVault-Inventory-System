@@ -1,6 +1,7 @@
 'use strict';
 
 const request = require('supertest');
+const bcrypt  = require('bcryptjs');
 const app = require('../app');
 const { db, initialize } = require('../config/database');
 
@@ -16,6 +17,22 @@ async function getAuthToken(email = 'driver@example.com', password = 'pass1234')
     .post('/api/auth/login')
     .send({ email, password });
 
+  return res.body.token;
+}
+
+/** Insert an ADMIN user directly into the DB and return their Bearer token. */
+async function getAdminToken() {
+  const hashedPassword = await bcrypt.hash('adminpass', 10);
+  await new Promise((resolve, reject) => {
+    db.run(
+      `INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)`,
+      ['Admin User', 'admin@example.com', hashedPassword, 'ADMIN'],
+      (err) => (err ? reject(err) : resolve())
+    );
+  });
+  const res = await request(app)
+    .post('/api/auth/login')
+    .send({ email: 'admin@example.com', password: 'adminpass' });
   return res.body.token;
 }
 
@@ -321,6 +338,86 @@ describe('GET /api/vehicles', () => {
     expect(resB.statusCode).toBe(200);
     expect(resB.body.vehicles.length).toBe(1);
     expect(resB.body.vehicles[0].make).toBe('Toyota');
+  });
+
+});
+
+// ── POST /api/vehicles — admin authorization ──────────────────────────────────
+
+describe('POST /api/vehicles — admin authorization', () => {
+
+  // A. USER must receive 403
+  it('should return 403 when a USER (non-admin) tries to add a vehicle', async () => {
+    const userToken = await getAuthToken();
+
+    const res = await request(app)
+      .post('/api/vehicles')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send(VALID_VEHICLE);
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toHaveProperty('error');
+  });
+
+  // B. ADMIN must succeed
+  it('should allow an ADMIN to add a vehicle and return 201', async () => {
+    const adminToken = await getAdminToken();
+
+    const res = await request(app)
+      .post('/api/vehicles')
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send(VALID_VEHICLE);
+
+    expect(res.statusCode).toBe(201);
+    expect(res.body).toHaveProperty('vehicle');
+    expect(res.body.vehicle.make).toBe('Toyota');
+  });
+
+});
+
+// ── PUT /api/vehicles/:id — admin authorization ───────────────────────────────
+
+describe('PUT /api/vehicles/:id — admin authorization', () => {
+
+  /** Seed a vehicle directly via DB so these tests are independent of POST auth. */
+  async function seedVehicle() {
+    return new Promise((resolve, reject) => {
+      db.run(
+        `INSERT INTO vehicles (make, model, category, price, quantity) VALUES (?, ?, ?, ?, ?)`,
+        ['Honda', 'Civic', 'Sedan', 22000, 4],
+        function (err) { err ? reject(err) : resolve(this.lastID); }
+      );
+    });
+  }
+
+  // C. USER must receive 403
+  it('should return 403 when a USER (non-admin) tries to update a vehicle', async () => {
+    const userToken = await getAuthToken();
+    const vehicleId = await seedVehicle();
+
+    const res = await request(app)
+      .put(`/api/vehicles/${vehicleId}`)
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ make: 'Honda', model: 'Civic', category: 'Sedan', price: 23000, quantity: 4 });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.body).toHaveProperty('error');
+  });
+
+  // D. ADMIN must succeed
+  it('should allow an ADMIN to update a vehicle and return 200', async () => {
+    const adminToken = await getAdminToken();
+    const vehicleId  = await seedVehicle();
+
+    const res = await request(app)
+      .put(`/api/vehicles/${vehicleId}`)
+      .set('Authorization', `Bearer ${adminToken}`)
+      .send({ make: 'Honda', model: 'Civic', category: 'Sedan', price: 24000, quantity: 6 });
+
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toHaveProperty('vehicle');
+    expect(res.body.vehicle.price).toBe(24000);
+    expect(res.body.vehicle.quantity).toBe(6);
   });
 
 });
